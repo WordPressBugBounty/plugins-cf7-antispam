@@ -2,6 +2,7 @@
 
 namespace CF7_AntiSpam\Core;
 
+use CF7_AntiSpam\Admin\CF7_AntiSpam_Admin_Tools;
 use WP_Query;
 use WPCF7_ContactForm;
 use WPCF7_Submission;
@@ -19,6 +20,7 @@ use Flamingo_Inbound_Message;
  * A class that is used to connect this plugin with Flamingo
  */
 class CF7_AntiSpam_Flamingo {
+
 
 	/**
 	 * It checks the database for any stored emails that have been sent by Contact Form 7, and if it finds any, it adds them
@@ -71,87 +73,117 @@ class CF7_AntiSpam_Flamingo {
 	}
 
 	/**
+	 * Process the updated flamingo message after it was changed from spam to ham or vice-versa
+	 *
+	 * @param int    $post_id the post-id
+	 * @param string $action the new status for the post
+	 */
+	private function process_flamingo_update( int $post_id, string $action ) {
+		$options = get_option( 'cf7a_options' );
+
+		$b8 = new CF7_AntiSpam_B8();
+
+		$flamingo_post = new Flamingo_Inbound_Message( $post_id );
+
+		/* Get the message from flamingo mail */
+		$message = self::cf7a_get_mail_field( $flamingo_post, 'message' );
+
+		if ( empty( $message ) ) {
+			update_post_meta( $flamingo_post->id(), '_cf7a_b8_classification', 'none' );
+
+			/* translators: %s - the post id. */
+			cf7a_log( sprintf( __( "%s has no message text so can't be analyzed", 'cf7-antispam' ), $post_id ), 1 );
+		} else {
+			$rating = ! empty( $flamingo_post->meta['_cf7a_b8_classification'] ) ? $flamingo_post->meta['_cf7a_b8_classification'] : $b8->cf7a_b8_classify( $message );
+
+			if ( ! $flamingo_post->spam && 'spam' === $action ) {
+				$b8->cf7a_b8_unlearn_ham( $message );
+				$b8->cf7a_b8_learn_spam( $message );
+
+				if ( $options['autostore_bad_ip'] ) {
+					CF7_Antispam_Blocklist::cf7a_ban_by_ip( $flamingo_post->meta['remote_ip'], array( 'flamingo ban' ) );
+				}
+			} elseif ( $flamingo_post->spam && 'ham' === $action ) {
+				$b8->cf7a_b8_unlearn_spam( $message );
+				$b8->cf7a_b8_learn_ham( $message );
+
+				if ( $options['autostore_bad_ip'] ) {
+					CF7_Antispam_Blocklist::cf7a_unban_by_ip( $flamingo_post->meta['remote_ip'] );
+				}
+			}
+
+			$rating_after = $b8->cf7a_b8_classify( $message, true );
+
+			update_post_meta( $flamingo_post->id(), '_cf7a_b8_classification', $rating_after );
+
+			cf7a_log(
+				CF7ANTISPAM_LOG_PREFIX . sprintf(
+				/* translators: %1$s is the mail "from" field (the sender). %2$s spam/ham. %3$s and %4$s the rating of the processed email (like 0.6/1) */
+					__( 'b8 has learned this e-mail from %1$s was %2$s - score before/after: %3$f/%4$f', 'cf7-antispam' ),
+					$flamingo_post->from_email,
+					$action,
+					$rating,
+					$rating_after
+				),
+				1
+			);
+		}//end if
+	}
+
+	/**
 	 * It adds a column to the Flamingo spam folder, and when you mark a message as spam or ham, it learns from it
 	 */
 	public function cf7a_d8_flamingo_classify() {
+		// If $_REQUEST is not available is not our business
+		if ( ! isset( $_REQUEST ) ) {
+			return;
+		}
+
+		// Get the action field
 		$req_action = isset( $_REQUEST['action'] ) ? sanitize_key( wp_unslash( $_REQUEST['action'] ) ) : false;
-		$req_save   = isset( $_REQUEST['save'] ) ? sanitize_key( wp_unslash( $_REQUEST['save'] ) ) : false;
-		$req_status = isset( $_REQUEST['inbound']['status'] ) ? sanitize_key( wp_unslash( $_REQUEST['inbound']['status'] ) ) : false;
-		$req_id     = isset( $_REQUEST['post'] ) ? intval( $_REQUEST['post'] ) : false;
 
-		if ( $req_action && ( 'spam' === $req_action || 'unspam' === $req_action || 'save' === $req_action ) ) {
+		if ( 'spam' === $req_action || 'unspam' === $req_action || 'save' === $req_action ) {
+
+			// Detect the selected action
+			$req_save = isset( $_REQUEST['save'] ) ? sanitize_key( wp_unslash( $_REQUEST['save'] ) ) : false;
 			if ( 'save' === $req_action && 'Update' === $req_save ) {
-				$action = 'spam' === $req_status ? 'spam' : 'ham';
-			}
-
-			if ( 'spam' === $req_action ) {
+				$req_status = isset( $_REQUEST['inbound']['status'] ) ? sanitize_key( wp_unslash( $_REQUEST['inbound']['status'] ) ) : false;
+				$action     = 'spam' === $req_status ? 'spam' : 'ham';
+			} elseif ( 'spam' === $req_action ) {
 				$action = 'spam';
 			} elseif ( 'unspam' === $req_action ) {
 				$action = 'ham';
 			}
 
-			if ( isset( $action ) ) {
-				$options = get_option( 'cf7a_options' );
-
-				$b8 = new CF7_AntiSpam_B8();
-				foreach ( (array) $req_id as $post_id ) {
-					$flamingo_post = new Flamingo_Inbound_Message( $post_id );
-					wp_verify_nonce( 'flamingo-update-inbound_' . $flamingo_post->id() );
-
-					/* get the message from flamingo mail */
-					$message = $this->cf7a_get_mail_field( $flamingo_post, 'message' );
-
-					if ( empty( $message ) ) {
-						update_post_meta( $flamingo_post->id(), '_cf7a_b8_classification', 'none' );
-
-						/* translators: %s - the post id. */
-						cf7a_log( sprintf( __( "%s has no message text so can't be analyzed", 'cf7-antispam' ), $post_id ), 1 );
-					} else {
-						$rating = ! empty( $flamingo_post->meta['_cf7a_b8_classification'] ) ? $flamingo_post->meta['_cf7a_b8_classification'] : $b8->cf7a_b8_classify( $message );
-
-						$filters = new CF7_AntiSpam_Filters();
-
-						if ( ! $flamingo_post->spam && 'spam' === $action ) {
-							$b8->cf7a_b8_unlearn_ham( $message );
-							$b8->cf7a_b8_learn_spam( $message );
-
-							if ( $options['autostore_bad_ip'] ) {
-								$filters->cf7a_ban_by_ip( $flamingo_post->meta['remote_ip'], 'flamingo ban' );
-							}
-						} elseif ( $flamingo_post->spam && 'ham' === $action ) {
-							$b8->cf7a_b8_unlearn_spam( $message );
-							$b8->cf7a_b8_learn_ham( $message );
-
-							if ( $options['autostore_bad_ip'] ) {
-								$filters->cf7a_unban_by_ip( $flamingo_post->meta['remote_ip'] );
-							}
-						}
-
-						$rating_after = $b8->cf7a_b8_classify( $message, true );
-
-						update_post_meta( $flamingo_post->id(), '_cf7a_b8_classification', $rating_after );
-
-						cf7a_log(
-							CF7ANTISPAM_LOG_PREFIX . sprintf(
-							/* translators: %1$s is the mail "from" field (the sender). %2$s spam/ham. %3$s and %4$s the rating of the processed email (like 0.6/1) */
-								__( 'b8 has learned this e-mail from %1$s was %2$s - score before/after: %3$f/%4$f', 'cf7-antispam' ),
-								$flamingo_post->from_email,
-								$action,
-								$rating,
-								$rating_after
-							),
-							1
-						);
-					}
-				}
+			// We are going to mimic the same security check used in flamingo (flamingo/admin/includes/meta-boxes.php:210)
+			// phpcs:ignore: WordPress.Security.NonceVerification.Recommended
+			if ( isset( $_REQUEST['post'] ) && ! current_user_can( 'flamingo_edit_inbound_message', intval( $_REQUEST['post'] ) ) ) {
+				wp_die(
+					wp_kses_data( __( 'You are not allowed to edit this item.', 'flamingo' ) )
+				);
 			}
-		}
+
+			if ( is_array( $_REQUEST['post'] ) ) {
+				check_admin_referer( 'bulk-posts' );
+			} else {
+				// checking referer page
+				$post_id = intval( $_REQUEST['post'] );
+				check_admin_referer( "flamingo-{$req_action}-inbound-message_{$post_id}" );
+			}
+
+			if ( isset( $action ) && isset( $_REQUEST['post'] ) ) {
+				$posts_ids = array_map( 'intval', (array) wp_unslash( $_REQUEST['post'] ) );
+				foreach ( $posts_ids as $post_id ) {
+					$this->process_flamingo_update( $post_id, $action );
+				}
+			}//end if
+		}//end if
 	}
 
 	/**
 	 * It gets the message content from a Flamingo post
 	 *
-	 * @warning this work only if the flamingo message has the channel stored,
+	 * @warning this will work only if the flamingo message has the channel stored,
 	 * usually the contact form the contact form and its shortcode must be
 	 * configured properly (you can figure out from how in flamingo inbound you have two items e.g. Contact Form 7 / form name).
 	 *
@@ -180,14 +212,14 @@ class CF7_AntiSpam_Flamingo {
 				}
 			} else {
 				/* the message field could be multiple */
-				$message_meta = isset( $additional_settings[ $field ] ) ? $additional_settings[ $field ] : false;
+				$message_meta = $additional_settings[ $field ] ?? false;
 				$message      = cf7a_maybe_split_mail_meta( $flamingo_post->fields, $message_meta, ' ' );
 
 				if ( ! empty( $message ) ) {
 					return esc_html( $message );
 				}
 			}
-		}
+		}//end if
 
 		if ( 'message' === $field ) {
 			cf7a_log( 'Original contact form slug not found for flamingo post id ' . $flamingo_post->id() . '. please check your contact form 7 shortcode / settings', 2 );
@@ -208,26 +240,23 @@ class CF7_AntiSpam_Flamingo {
 	 *
 	 * @param int $mail_id The ID of the mail to resend.
 	 *
-	 * @return bool|mixed|null
+	 * @return array { success: boolean, message: string }
 	 */
-	public function cf7a_resend_mail( $mail_id ) {
+	public function cf7a_resend_mail( int $mail_id ): array {
 		$flamingo_data = new Flamingo_Inbound_Message( $mail_id );
-
-		if ( ! empty( $flamingo_data->meta['message_field'] ) && ! empty( $flamingo_data->fields[ $flamingo_data->meta['message_field'] ] ) ) {
-			$message = $flamingo_data->fields[ $flamingo_data->meta['message_field'] ];
-		}
+		$message       = self::cf7a_get_mail_field( $flamingo_data, 'message' );
 
 		if ( empty( $message ) ) {
-			$message = self::cf7a_get_mail_field( $flamingo_data, 'message' );
-		}
-
-		if ( empty( $message ) ) {
-			return 'empty';
+			return array(
+				'success' => false,
+				'message' => __( 'Cannot find the original post', 'cf7-antispam' ),
+				'log'     => $flamingo_data,
+			);
 		}
 
 		/* the mail data */
-		$sender  = $flamingo_data->from;
-		$subject = $flamingo_data->subject;
+		$sender  = sanitize_email( $flamingo_data->from );
+		$subject = sanitize_text_field( $flamingo_data->subject );
 		$body    = $message;
 
 		// get the form id from the meta
@@ -235,40 +264,92 @@ class CF7_AntiSpam_Flamingo {
 
 		// TODO: we are skipping the mail_2 for now
 
-		// Get the mail recipient
-		$form       = WPCF7_ContactForm::get_instance( $form_id );
-		$form_props = $form->get_properties();
-		$recipient  = $form_props['mail']['recipient'];
-		if ( $form_props['mail']['recipient'] || ! empty( $flamingo_data->meta['recipient'] ) ) {
-			if ( ! filter_var( $recipient, FILTER_VALIDATE_EMAIL ) && ! empty( $recipient ) ) {
-				if ( '[_site_admin_email]' === $recipient ) {
-					$recipient = $flamingo_data->meta['site_admin_email'];
-				} elseif ( '[_post_author]' === $recipient ) {
-					$recipient = get_option( 'post_author_email' ); // check this, not sure 🤔
-				} else {
-					$recipient = get_option( 'admin_email' );
+		// Get the mail recipient from CF7 form configuration
+		$recipient = null;
+		$form      = WPCF7_ContactForm::get_instance( $form_id );
+
+		if ( ! empty( $form ) ) {
+			$form_props = $form->get_properties();
+
+			if ( isset( $form_props['mail']['recipient'] ) ) {
+				$recipient = $form_props['mail']['recipient'];
+
+				// Handle special CF7 tags
+				if ( ! filter_var( $recipient, FILTER_VALIDATE_EMAIL ) && ! empty( $recipient ) ) {
+					if ( '[_site_admin_email]' === $recipient ) {
+						$recipient = $flamingo_data->meta['site_admin_email'] ?? get_option( 'admin_email' );
+					} elseif ( '[_post_author]' === $recipient ) {
+						$recipient = $flamingo_data->meta['post_author_email'];
+					} else {
+						// Handle form field references like [your-email]
+						$recipient = $this->cf7a_parse_mail_tags( $recipient, $flamingo_data );
+
+						// SECURITY FIX: Sanitize recipient email
+						$recipient = sanitize_email( $recipient );
+
+						// If still not a valid email, fallback to admin
+						if ( ! filter_var( $recipient, FILTER_VALIDATE_EMAIL ) ) {
+							$recipient = sanitize_email( get_option( 'admin_email' ) );
+						}
+					}
+				}
+			}//end if
+		}//end if
+
+		// Fallback to stored recipient or admin email
+		if ( empty( $recipient ) || ! filter_var( $recipient, FILTER_VALIDATE_EMAIL ) ) {
+			if ( ! empty( $flamingo_data->meta['recipient'] ) ) {
+				$recipient = sanitize_email( $flamingo_data->meta['recipient'] );
+			} else {
+				$recipient = sanitize_email( get_option( 'admin_email' ) );
+			}
+		}
+
+		$tools  = new CF7_AntiSpam_Admin_Tools();
+		$result = $tools->send_email_to_admin( $subject, $recipient, $body, $sender );
+
+		if ( $result ) {
+			return array(
+				'success' => true,
+				'message' => __( 'Email sent with success', 'cf7-antispam' ),
+			);
+		}
+
+		return array(
+			'success' => false,
+			'message' => __( 'Ops! something went wrong... unable to resend email', 'cf7-antispam' ),
+			'log'     => array(
+				'recipient' => $recipient,
+				'sender'    => $sender,
+				'subject'   => $subject,
+				'body'      => $body,
+			),
+		);
+	}
+
+	/**
+	 * Parse CF7 mail tags in the recipient field
+	 *
+	 * @param string                   $recipient The recipient string that may contain CF7 tags
+	 * @param Flamingo_Inbound_Message $flamingo_data The flamingo message data
+	 * @return string The parsed recipient email
+	 */
+	private function cf7a_parse_mail_tags( $recipient, $flamingo_data ) {
+		// Handle form field references like [your-email]
+		if ( preg_match( '/\[([^\]]+)\]/', $recipient, $matches ) ) {
+			$field_name = $matches[1];
+
+			if ( isset( $flamingo_data->fields[ $field_name ] ) ) {
+				$field_value = $flamingo_data->fields[ $field_name ];
+
+				// If it's an email field, return the email
+				if ( filter_var( $field_value, FILTER_VALIDATE_EMAIL ) ) {
+					return sanitize_email( $field_value );
 				}
 			}
 		}
 
-		/**
-		 * Filter cf7-antispam before resend an email who was spammed
-		 *
-		 * @param string $body the mail message content
-		 * @param string  $sender  the mail message sender
-		 * @param string  $subject  the mail message subject
-		 *
-		 * @returns string the mail body content
-		 */
-		$body = apply_filters( 'cf7a_before_resend_email', $body, $sender, $subject );
-
-		$headers  = "From: {$recipient}\n";
-		$headers .= "Content-Type: text/html\n";
-		$headers .= "X-WPCF7-Content-Type: text/html\n";
-		$headers .= "Reply-To: $sender\n";
-
-		/* send the email */
-		return wp_mail( $recipient, $subject, $body, $headers );
+		return $recipient;
 	}
 
 	/**
@@ -311,10 +392,15 @@ class CF7_AntiSpam_Flamingo {
 	 * @return bool|void
 	 */
 	public function cf7a_flamingo_store_additional_data( $result ) {
+		// If "result" is not an array, return false
+		if ( empty( $result ) || ! is_array( $result ) ) {
+			return;
+		}
+
 		$submission = WPCF7_Submission::get_instance();
 
 		if ( ! $submission ) {
-			return true;
+			return;
 		}
 
 		$posted_data = $submission->get_posted_data();
@@ -350,7 +436,7 @@ class CF7_AntiSpam_Flamingo {
 
 			$rating = ! empty( $message ) ? round( $b8->cf7a_b8_classify( $message ), 2 ) : 'none';
 
-			update_post_meta( $result['flamingo_inbound_id'], '_cf7a_b8_classification', is_numeric( $rating ) ? round( $rating, 2 ) : $rating );
+			update_post_meta( $result['flamingo_inbound_id'], '_cf7a_b8_classification', $rating );
 		}
 	}
 
@@ -366,7 +452,7 @@ class CF7_AntiSpam_Flamingo {
 
 		if ( isset( $options['check_honeypot'] ) && intval( $options['check_honeypot'] ) === 1 ) {
 			$submission             = WPCF7_Submission::get_instance();
-			$honeypot_default_names = get_honeypot_input_names( $options['honeypot_input_names'] );
+			$honeypot_default_names = cf7a_get_honeypot_input_names( $options['honeypot_input_names'] );
 
 			if ( ! $submission ) {
 				return true;
@@ -387,7 +473,7 @@ class CF7_AntiSpam_Flamingo {
 			}
 
 			return update_post_meta( $result['flamingo_inbound_id'], '_fields', $fields );
-		}
+		}//end if
 
 		return true;
 	}
@@ -423,7 +509,7 @@ class CF7_AntiSpam_Flamingo {
 		$classification = get_post_meta( $post_id, '_cf7a_b8_classification', true );
 		if ( 'd8' === $column ) {
 			echo wp_kses(
-				/* translators: none is a label, please keep it short! thanks! */
+			/* translators: none is a label, please keep it short! thanks! */
 				cf7a_format_rating( 'none' === $classification ? esc_html__( 'none', 'cf7-antispam' ) : floatval( $classification ) ),
 				array(
 					'span' => array(
@@ -444,11 +530,12 @@ class CF7_AntiSpam_Flamingo {
 	 */
 	public static function flamingo_resend_column( $column, $post_id ) {
 		if ( 'resend' === $column ) {
-			$url = wp_nonce_url( add_query_arg( 'action', 'cf7a_resend_' . $post_id, menu_page_url( 'cf7-antispam', false ) ), 'cf7a-nonce', 'cf7a-nonce' );
+			$nonce = wp_create_nonce( 'cf7a-nonce' );
 			printf(
-				'<a class="button cf7a_alert" data-href="%s" data-message="%s">%s</a>',
-				esc_url_raw( $url ),
-				esc_html__( 'Are you sure?', 'cf7-antispam' ),
+				'<a class="button cf7a_action cf7a_action_flamingo" data-action="resend_message" data-nonce="%s" data-id="%s" data-message="%s">%s</a>',
+				esc_attr( $nonce ),
+				(int) $post_id,
+				esc_html__( 'Do you want to resend this email?', 'cf7-antispam' ),
 				esc_html__( 'Resend Email', 'cf7-antispam' )
 			);
 		}
@@ -463,13 +550,22 @@ class CF7_AntiSpam_Flamingo {
 	 */
 	public static function cf7a_reset_dictionary() {
 		global $wpdb;
-		$r = $wpdb->query( "TRUNCATE TABLE `{$wpdb->prefix}cf7a_wordlist`" );
+
+		$table = $wpdb->prefix . 'cf7a_wordlist';
+
+		$r = $wpdb->query(
+			$wpdb->prepare( 'TRUNCATE TABLE %i', $table )
+		);
 
 		if ( ! is_wp_error( $r ) ) {
-			$wpdb->query( 'INSERT INTO `' . $wpdb->prefix . "cf7a_wordlist` (`token`, `count_ham`) VALUES ('b8*dbversion', '3');" );
-			$wpdb->query( 'INSERT INTO `' . $wpdb->prefix . "cf7a_wordlist` (`token`, `count_ham`, `count_spam`) VALUES ('b8*texts', '0', '0');" );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->query( $wpdb->prepare( 'INSERT INTO %i (`token`, `count_ham`) VALUES (%s, %d)', $table, 'b8*dbversion', 3 ) );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->query( $wpdb->prepare( 'INSERT INTO %i (`token`, `count_ham`, `count_spam`) VALUES (%s, %d, %d)', $table, 'b8*texts', 0, 0 ) );
+
 			return true;
 		}
+
 		return false;
 	}
 
@@ -478,7 +574,14 @@ class CF7_AntiSpam_Flamingo {
 	 */
 	public static function cf7a_reset_b8_classification() {
 		global $wpdb;
-		$r = $wpdb->query( 'DELETE FROM ' . $wpdb->prefix . "postmeta WHERE `meta_key` = '_cf7a_b8_classification'" );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$r = $wpdb->query(
+			$wpdb->prepare(
+				'DELETE FROM %i WHERE `meta_key` = %s',
+				$wpdb->prefix . 'postmeta',
+				'_cf7a_b8_classification'
+			)
+		);
 		return ( ! is_wp_error( $r ) );
 	}
 
