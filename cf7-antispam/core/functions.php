@@ -322,7 +322,7 @@ function cf7a_rgb2hex( $r, $g, $b ) {
  */
 function cf7a_format_rating( $rating ) {
 	if ( ! is_numeric( $rating ) ) {
-		return sprintf( '<span class="flamingo-rating-label cf7a-tag-none" style="background-color: #999"><b>%s</b></span>', __( 'none', 'cf7-antispam' ) );
+		return sprintf( '<span class="cf7a-rating-label cf7a-tag-none" style="background-color: #999"><b>%s</b></span>', __( 'none', 'cf7-antispam' ) );
 	}
 
 	$red   = floor( 200 * $rating );
@@ -330,7 +330,7 @@ function cf7a_format_rating( $rating ) {
 
 	$color = cf7a_rgb2hex( $red, $green, 0 );
 
-	return sprintf( '<span class="flamingo-rating-label" style="background-color: %s"><b>%s%% </b></span>', $color, round( $rating * 100 ) );
+	return sprintf( '<span class="cf7a-rating-label" style="background-color: %s"><b>%s%% </b></span>', $color, round( $rating * 100 ) );
 }
 
 /**
@@ -374,8 +374,12 @@ function cf7a_format_status( $rank ) {
  *
  * @return string Compress arrays into "key:value; " pair
  */
-function cf7a_compress_array( array $arr, bool $is_html = false ): string {
+function cf7a_compress_array( $arr, bool $is_html = false ): string {
 	if ( ! is_array( $arr ) ) {
+		// Handle string data
+		if ( is_string( $arr ) && ! empty( $arr ) ) {
+			return $arr;
+		}
 		return '';
 	}
 	$is_html = intval( $is_html );

@@ -173,8 +173,13 @@ class CF7_AntiSpam {
 		$blocklist = new CF7_Antispam_Blocklist();
 		add_action( 'cf7a_cron', array( $blocklist, 'cf7a_cron_unban' ) );
 
+		/* 3d party plugins */
+		if ( ! function_exists( 'is_plugin_active' ) ) {
+			include_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
 		/* flamingo */
-		if ( defined( 'FLAMINGO_VERSION' ) ) {
+		if ( function_exists( 'is_plugin_active' ) && is_plugin_active( 'flamingo/flamingo.php' ) ) {
 			$cf7a_flamingo = new CF7_AntiSpam_Flamingo();
 
 			/* if flamingo is defined the mail will be analyzed after flamingo has stored */
@@ -192,9 +197,12 @@ class CF7_AntiSpam {
 		}
 
 		/* smtp */
-		if ( defined( 'cf7_smtp' ) ) {
+		if ( function_exists( 'is_plugin_active' ) && is_plugin_active( 'cf7-smtp/cf7-smtp.php' ) ) {
 			add_filter( 'cf7_smtp_report_mailbody', array( $this, 'spam_mail_report' ), 10, 2 );
 		}
+
+		/* comment protection */
+		new CF7_AntiSpam_Comments();
 	}
 
 	/**
@@ -240,13 +248,23 @@ class CF7_AntiSpam {
 				/* the action that handles the spam and ham requests and pass the mail message to b8 */
 				add_action( 'load-flamingo_page_flamingo_inbound', array( $cf7a_flamingo, 'cf7a_d8_flamingo_classify' ), 9, 0 );
 
-				$this->loader->add_action( 'wp_dashboard_setup', $plugin_admin, 'cf7a_dashboard_widget' );
+				/**
+				 * Widget Visibility
+				 * Define the capability needed to see the widget (default: manage_options for Admins).
+				 *
+				 * @since 0.7.4
+				 */
+				$capability = apply_filters( 'cf7a_stats_capability', 'manage_options' );
+
+				if ( current_user_can( $capability ) ) {
+					$this->loader->add_action( 'wp_dashboard_setup', $plugin_admin, 'cf7a_dashboard_widget' );
+				}
 
 				/* adds the custom table columns*/
 				add_filter( 'manage_flamingo_inbound_posts_columns', array( $cf7a_flamingo, 'flamingo_columns' ) );
 				add_action( 'manage_flamingo_inbound_posts_custom_column', array( $cf7a_flamingo, 'flamingo_d8_column' ), 10, 2 );
 				add_action( 'manage_flamingo_inbound_posts_custom_column', array( $cf7a_flamingo, 'flamingo_resend_column' ), 11, 2 );
-			}
+			}//end if
 		}//end if
 	}
 
@@ -392,6 +410,7 @@ class CF7_AntiSpam {
 
 		$post_table = $wpdb->prefix . 'posts';
 
+		// Get total spam count
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 		$all = $wpdb->get_var(
 			$wpdb->prepare(
@@ -400,24 +419,56 @@ class CF7_AntiSpam {
 			)
 		);
 
+		// Get spam count since last report
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 		$last = $wpdb->get_var(
 			$wpdb->prepare(
 				"SELECT COUNT(*) AS cnt
-		 	 FROM %i
-		 	 WHERE post_date_gmt >= FROM_UNIXTIME( %d )
-			 AND post_status = 'flamingo-spam';",
+            FROM %i
+            WHERE post_date_gmt >= FROM_UNIXTIME( %d )
+            AND post_status = 'flamingo-spam';",
 				$post_table,
 				$last_report_timestamp
 			)
 		);
 
-		$mail_body .= '<p>' . sprintf(
-				/* translators: %1$s overall spam attempts, %2$s since last report */
-			__( '%1$s overall spam attempts, %2$s since last report', 'cf7-antispam' ),
-			$all,
-			$last
-		) . '</p>';
+		// Get non-spam (ham) count since last report for comparison
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$ham_last = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) AS cnt
+            FROM %i
+            WHERE post_date_gmt >= FROM_UNIXTIME( %d )
+            AND post_status = 'publish';",
+				$post_table,
+				$last_report_timestamp
+			)
+		);
+
+		// Build the styled HTML content
+		$spam_report = sprintf(
+			'<div style="background: #fff3cd; padding: 20px; border-radius: 6px; border-left: 4px solid #ff6b6b;">
+            <h2 style="color: #333; font-size: 18px; font-weight: 600; margin: 0 0 12px 0;">%s</h2>
+            <div style="margin-bottom: 12px;">
+                <span style="font-size: 24px; color: #ff6b6b; font-weight: 700;">%d</span>
+                <span style="color: #666; font-size: 14px; margin-left: 8px;">%s</span>
+            </div>
+            <p style="color: #666; font-size: 14px; margin: 0; line-height: 1.6;">
+                <strong style="color: #333;">%d</strong> %s<br>
+                <strong style="color: #333;">%d</strong> %s
+            </p>
+        </div>',
+			esc_html__( 'Spam Protection Statistics', 'cf7-antispam' ),
+			intval( $last ),
+			esc_html__( 'Spam Blocked Recently', 'cf7-antispam' ),
+			intval( $all ),
+			esc_html__( 'total spam attempts blocked', 'cf7-antispam' ),
+			intval( $ham_last ),
+			esc_html__( 'legitimate messages delivered', 'cf7-antispam' )
+		);
+
+		// Append to the mail body
+		$mail_body .= $spam_report;
 
 		return $mail_body;
 	}

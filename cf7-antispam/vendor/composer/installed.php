@@ -1,8 +1,8 @@
 <?php return array(
     'root' => array(
         'name' => 'codekraft/contactform7-antispam',
-        'pretty_version' => '0.7.4',
-        'version' => '0.7.4.0',
+        'pretty_version' => '0.7.5',
+        'version' => '0.7.5.0',
         'reference' => null,
         'type' => 'wordpress-plugin',
         'install_path' => __DIR__ . '/../../',
@@ -11,8 +11,8 @@
     ),
     'versions' => array(
         'codekraft/contactform7-antispam' => array(
-            'pretty_version' => '0.7.4',
-            'version' => '0.7.4.0',
+            'pretty_version' => '0.7.5',
+            'version' => '0.7.5.0',
             'reference' => null,
             'type' => 'wordpress-plugin',
             'install_path' => __DIR__ . '/../../',

@@ -2,11 +2,10 @@
 
 namespace CF7_AntiSpam\Admin;
 
-use Exception;
-
 use CF7_AntiSpam\Core\CF7_AntiSpam;
+use CF7_AntiSpam\Core\CF7_AntiSpam_Rules;
 use CF7_AntiSpam\Core\CF7_Antispam_Geoip;
-use CF7_AntiSpam\Core\CF7_AntiSpam_Filters;
+use Exception;
 
 /**
  * The plugin notices and ui stuff.
@@ -106,6 +105,10 @@ class CF7_AntiSpam_Admin_Display {
 				class="cf7a-nav-tab tab-import-export <?php echo 'import-export' === $active_tab ? 'nav-tab-active' : ''; ?>">
 				<span class="dashicons dashicons-database-export"></span> <?php esc_html_e( 'Import/Export', 'cf7-antispam' ); ?>
 			</a>
+			<a href="<?php echo esc_url( wp_nonce_url( $this->get_tab_url( 'wordlist' ), $nonce_action ) ); ?>"
+				class="cf7a-nav-tab tab-wordlist <?php echo 'wordlist' === $active_tab ? 'nav-tab-active' : ''; ?>">
+				<span class="dashicons dashicons-editor-spellcheck"></span> <?php esc_html_e( 'Wordlist', 'cf7-antispam' ); ?>
+			</a>
 			<?php if ( WP_DEBUG || CF7ANTISPAM_DEBUG ) : ?>
 				<a href="<?php echo esc_url( wp_nonce_url( $this->get_tab_url( 'debug' ), $nonce_action ) ); ?>"
 					class="cf7a-nav-tab tab-debug <?php echo 'debug' === $active_tab ? 'nav-tab-active' : ''; ?>">
@@ -147,6 +150,13 @@ class CF7_AntiSpam_Admin_Display {
 				<?php
 				if ( 'import-export' === $active_tab ) {
 					$this->render_import_export_tab();
+				}
+				?>
+			</div>
+			<div id="wordlist" class="cf7a-tab-panel <?php echo 'wordlist' === $active_tab ? 'active' : ''; ?>">
+				<?php
+				if ( 'wordlist' === $active_tab ) {
+					$this->render_wordlist_tab();
 				}
 				?>
 			</div>
@@ -620,6 +630,9 @@ class CF7_AntiSpam_Admin_Display {
 			__( 'Have a trusted static IP? Add it to the IP Allowlist in Settings to ensure your own tests or admin submissions are never blocked.', 'cf7-antispam' ),
 			__( 'The "Max Attempts" setting automatically blocks IPs that repeatedly trigger spam filters. Adjust this limit to be stricter or more lenient.', 'cf7-antispam' ),
 			__( 'Browser fingerprinting helps identify bots even if they change IPs. Ensure "Check Bot Fingerprint" is active for robust detection.', 'cf7-antispam' ),
+			__( 'Do you face an error message? Check the Debug Info tab to see the debug information. You may need to add the CF7ANTISPAM_DEBUG constant to your wp-config.php file.', 'cf7-antispam' ),
+			__( 'Do you have a suggestion, a feature request or a bug report? Please let us know by opening a ticket on the support forum.', 'cf7-antispam' ),
+			__( 'You can create your own antispam rules using the cf7a_spam_check_chain filter. Learn more on the documentation.', 'cf7-antispam' ),
 		);
 
 		return $tips[ round( wp_rand( 0, count( $tips ) - 1 ) ) ];
@@ -699,6 +712,109 @@ class CF7_AntiSpam_Admin_Display {
 		<div class="cf7a-card">
 			<h3><?php esc_html_e( 'Export/Import Options', 'cf7-antispam' ); ?></h3>
 			<?php $this->cf7a_export_options(); ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the Wordlist Tab
+	 */
+	private function render_wordlist_tab() {
+		$nonce = wp_create_nonce( 'cf7a-nonce' );
+		?>
+		<div class="cf7a-wordlist-manager" data-nonce="<?php echo esc_attr( $nonce ); ?>">
+			<div class="cf7a-card">
+				<h3><?php esc_html_e( 'B8 Dictionary Management', 'cf7-antispam' ); ?></h3>
+				<p><?php esc_html_e( 'View, edit, and manage words in the spam detection dictionary. Words with higher spam counts indicate spam-related content, while higher ham counts indicate legitimate content.', 'cf7-antispam' ); ?></p>
+
+				<!-- Search and Filter Controls -->
+				<div class="cf7a-wordlist-controls">
+					<div class="cf7a-wordlist-search">
+						<input type="text" id="cf7a-wordlist-search" placeholder="<?php esc_attr_e( 'Search words...', 'cf7-antispam' ); ?>" />
+						<button type="button" class="button" id="cf7a-wordlist-search-btn">
+							<span class="dashicons dashicons-search"></span>
+						</button>
+					</div>
+					<div class="cf7a-wordlist-filter">
+						<select id="cf7a-wordlist-type-filter">
+							<option value="all"><?php esc_html_e( 'All Words', 'cf7-antispam' ); ?></option>
+							<option value="spam"><?php esc_html_e( 'Spam Words', 'cf7-antispam' ); ?></option>
+							<option value="ham"><?php esc_html_e( 'Ham Words', 'cf7-antispam' ); ?></option>
+						</select>
+						<select id="cf7a-wordlist-per-page">
+							<option value="25">25 <?php esc_html_e( 'per page', 'cf7-antispam' ); ?></option>
+							<option value="50" selected>50 <?php esc_html_e( 'per page', 'cf7-antispam' ); ?></option>
+							<option value="100">100 <?php esc_html_e( 'per page', 'cf7-antispam' ); ?></option>
+						</select>
+					</div>
+				</div>
+
+				<!-- Wordlist Table -->
+				<div class="cf7a-wordlist-table-container">
+					<table class="wp-list-table widefat fixed striped cf7a-wordlist-table">
+						<thead>
+							<tr>
+								<th class="column-token cf7a-sortable" data-sort="token"><?php esc_html_e( 'Word/Token', 'cf7-antispam' ); ?></th>
+								<th class="column-spam cf7a-sortable" data-sort="count_spam"><?php esc_html_e( 'Spam Count', 'cf7-antispam' ); ?></th>
+								<th class="column-ham cf7a-sortable" data-sort="count_ham"><?php esc_html_e( 'Ham Count', 'cf7-antispam' ); ?></th>
+								<th class="column-score cf7a-sortable" data-sort="measure"><?php esc_html_e( 'Score', 'cf7-antispam' ); ?></th>
+								<th class="column-actions"><?php esc_html_e( 'Actions', 'cf7-antispam' ); ?></th>
+							</tr>
+						</thead>
+						<tbody id="cf7a-wordlist-body">
+							<tr class="cf7a-loading-row">
+								<td colspan="5">
+									<span class="spinner is-active"></span>
+									<?php esc_html_e( 'Loading words...', 'cf7-antispam' ); ?>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+
+				<!-- Pagination -->
+				<div class="cf7a-wordlist-pagination">
+					<button type="button" class="button" id="cf7a-wordlist-prev" disabled>
+						<span class="dashicons dashicons-arrow-left-alt2"></span>
+						<?php esc_html_e( 'Previous', 'cf7-antispam' ); ?>
+					</button>
+					<span class="cf7a-wordlist-page-info">
+						<?php esc_html_e( 'Page', 'cf7-antispam' ); ?>
+						<input type="number" id="cf7a-wordlist-page" value="1" min="1" />
+						<?php esc_html_e( 'of', 'cf7-antispam' ); ?>
+						<span id="cf7a-wordlist-total-pages">1</span>
+						(<span id="cf7a-wordlist-total-words">0</span> <?php esc_html_e( 'words', 'cf7-antispam' ); ?>)
+					</span>
+					<button type="button" class="button" id="cf7a-wordlist-next" disabled>
+						<?php esc_html_e( 'Next', 'cf7-antispam' ); ?>
+						<span class="dashicons dashicons-arrow-right-alt2"></span>
+					</button>
+				</div>
+			</div>
+
+			<!-- Edit Word Modal -->
+			<div id="cf7a-wordlist-edit-modal" class="cf7a-modal" style="display:none;">
+				<div class="cf7a-modal-content">
+					<span class="cf7a-modal-close">&times;</span>
+					<h3><?php esc_html_e( 'Edit Word', 'cf7-antispam' ); ?></h3>
+					<div class="cf7a-modal-body">
+						<p><strong><?php esc_html_e( 'Token:', 'cf7-antispam' ); ?></strong> <span id="cf7a-edit-token"></span></p>
+						<input type="hidden" id="cf7a-edit-token-value" />
+						<div class="cf7a-edit-field">
+							<label for="cf7a-edit-spam-count"><?php esc_html_e( 'Spam Count:', 'cf7-antispam' ); ?></label>
+							<input type="number" id="cf7a-edit-spam-count" min="0" />
+						</div>
+						<div class="cf7a-edit-field">
+							<label for="cf7a-edit-ham-count"><?php esc_html_e( 'Ham Count:', 'cf7-antispam' ); ?></label>
+							<input type="number" id="cf7a-edit-ham-count" min="0" />
+						</div>
+					</div>
+					<div class="cf7a-modal-footer">
+						<button type="button" class="button button-primary" id="cf7a-save-word"><?php esc_html_e( 'Save Changes', 'cf7-antispam' ); ?></button>
+						<button type="button" class="button cf7a-modal-cancel"><?php esc_html_e( 'Cancel', 'cf7-antispam' ); ?></button>
+					</div>
+				</div>
+			</div>
 		</div>
 		<?php
 	}
@@ -810,6 +926,13 @@ class CF7_AntiSpam_Admin_Display {
 				$meta         = unserialize( $row->meta );
 				$max_attempts = intval( get_option( 'cf7a_options' )['max_attempts'] );
 
+				// Ensure reason is properly formatted for cf7a_compress_array
+				$reason = isset( $meta['reason'] ) ? $meta['reason'] : array();
+				if ( is_string( $reason ) ) {
+					// Convert legacy string reasons to array format
+					$reason = array( 'legacy' => $reason );
+				}
+
 				$rows .= sprintf(
 					'<div class="row row-%s"><div class="status">%s</div><div><p class="ip">%s <small class="actions"><span class="cf7a_action" data-action="unban-ip" data-id="%s" data-nonce="%s" data-callback="hide">%s</span> <span class="cf7a_action" data-action="ban-forever" data-id="%s" data-nonce="%s" data-callback="hide">%s</span></small></p><span class="data">%s</span><span class="data date"><b>%s:</b> %s</span></div></div>',
 					esc_attr( intval( $row->id ) ),
@@ -821,7 +944,7 @@ class CF7_AntiSpam_Admin_Display {
 					esc_attr( $row->id ),
 					esc_attr( $nonce ),
 					esc_html__( '[ban forever]', 'cf7-antispam' ),
-					cf7a_compress_array( $meta['reason'], true ),
+					cf7a_compress_array( $reason, true ),
 					esc_html__( 'First seen on', 'cf7-antispam' ),
 					$row->created
 				);
@@ -1132,16 +1255,16 @@ class CF7_AntiSpam_Admin_Display {
 		$performance_test = array();
 
 		if ( filter_var( $remote_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
-			$reverse_ip = CF7_AntiSpam_Filters::cf7a_reverse_ipv4( $remote_ip );
+			$reverse_ip = CF7_AntiSpam_Rules::cf7a_reverse_ipv4( $remote_ip );
 		} elseif ( filter_var( $remote_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 ) ) {
-			$reverse_ip = CF7_AntiSpam_Filters::cf7a_reverse_ipv6( $remote_ip );
+			$reverse_ip = CF7_AntiSpam_Rules::cf7a_reverse_ipv6( $remote_ip );
 		} else {
 			$reverse_ip = false;
 		}
 
 		if ( $reverse_ip ) {
 			foreach ( $this->options['dnsbl_list'] as $dnsbl ) {
-				$is_spam                    = CF7_AntiSpam_Filters::cf7a_check_dnsbl( $reverse_ip, $dnsbl );
+				$is_spam                    = CF7_AntiSpam_Rules::cf7a_check_dnsbl( $reverse_ip, $dnsbl );
 				$microtime                  = cf7a_microtime_float();
 				$time_taken                 = strval( round( cf7a_microtime_float() - $microtime, 5 ) );
 				$performance_test[ $dnsbl ] =
