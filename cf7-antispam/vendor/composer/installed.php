@@ -1,8 +1,8 @@
 <?php return array(
     'root' => array(
         'name' => 'codekraft/contactform7-antispam',
-        'pretty_version' => '0.7.5',
-        'version' => '0.7.5.0',
+        'pretty_version' => '0.7.6',
+        'version' => '0.7.6.0',
         'reference' => null,
         'type' => 'wordpress-plugin',
         'install_path' => __DIR__ . '/../../',
@@ -11,8 +11,8 @@
     ),
     'versions' => array(
         'codekraft/contactform7-antispam' => array(
-            'pretty_version' => '0.7.5',
-            'version' => '0.7.5.0',
+            'pretty_version' => '0.7.6',
+            'version' => '0.7.6.0',
             'reference' => null,
             'type' => 'wordpress-plugin',
             'install_path' => __DIR__ . '/../../',
@@ -20,9 +20,9 @@
             'dev_requirement' => false,
         ),
         'composer/ca-bundle' => array(
-            'pretty_version' => '1.5.10',
-            'version' => '1.5.10.0',
-            'reference' => '961a5e4056dd2e4a2eedcac7576075947c28bf63',
+            'pretty_version' => '1.5.11',
+            'version' => '1.5.11.0',
+            'reference' => '68ff39175e8e94a4bb1d259407ce51a6a60f09e6',
             'type' => 'library',
             'install_path' => __DIR__ . '/./ca-bundle',
             'aliases' => array(),

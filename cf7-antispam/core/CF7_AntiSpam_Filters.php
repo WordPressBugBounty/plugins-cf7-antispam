@@ -10,6 +10,10 @@
 
 namespace CF7_AntiSpam\Core;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use CF7_AntiSpam\Core\Filters\Filter_B8_Bayesian;
 use CF7_AntiSpam\Core\Filters\Filter_Bad_Email_Strings;
 use CF7_AntiSpam\Core\Filters\Filter_Bad_IP;
@@ -19,6 +23,7 @@ use CF7_AntiSpam\Core\Filters\Filter_Bot_Fingerprint_Extras;
 use CF7_AntiSpam\Core\Filters\Filter_DNSBL;
 use CF7_AntiSpam\Core\Filters\Filter_Empty_IP;
 use CF7_AntiSpam\Core\Filters\Filter_Geoip;
+use CF7_AntiSpam\Core\Filters\Filter_High_Entropy;
 use CF7_AntiSpam\Core\Filters\Filter_Honeyform;
 use CF7_AntiSpam\Core\Filters\Filter_Honeypot;
 use CF7_AntiSpam\Core\Filters\Filter_IP_Allowlist;
@@ -57,6 +62,7 @@ class CF7_AntiSpam_Filters {
 		// Checks that originally ran only if score < 1 (See logic inside methods)
 		add_filter( 'cf7a_spam_check_chain', array( new Filter_Referrer_Protocol(), 'check' ), 10 );
 		add_filter( 'cf7a_spam_check_chain', array( new Filter_Plugin_Version(), 'check' ), 10 );
+		add_filter( 'cf7a_spam_check_chain', array( new Filter_High_Entropy(), 'check' ), 10 );
 		add_filter( 'cf7a_spam_check_chain', array( new Filter_Bot_Fingerprint(), 'check' ), 10 );
 		add_filter( 'cf7a_spam_check_chain', array( new Filter_Bot_Fingerprint_Extras(), 'check' ), 10 );
 		add_filter( 'cf7a_spam_check_chain', array( new Filter_Language(), 'check' ), 10 );
@@ -194,10 +200,10 @@ class CF7_AntiSpam_Filters {
 				'dnsbl'                  => '_dnsbl',
 				'no_ip'                  => '_warn',
 				'geo_ip'                 => '_warn',
-				'high_entropy'           => '_bad_string',
+				'high_entropy'           => '_detection',
 				'honeyform'              => '_honeypot',
 				'honeypot'               => '_honeypot',
-				'blocklisted'            => '_warn',
+				'blocklisted'            => '_detection',
 				'browser_language'       => '_detection',
 				'language_field'         => '_detection',
 				'language_incoherence'   => '_detection',
